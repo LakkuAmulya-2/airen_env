@@ -70,6 +70,14 @@ def log(obj: Dict[str, Any]) -> None:
     print(json.dumps(obj), flush=True)
 
 
+def structured_log(event: str, fields: Dict[str, Any]) -> None:
+    label = " ".join(f"{k}={v}" for k, v in fields.items())
+    print(f"[{event}] {label}", flush=True)
+    payload = {"event": f"[{event}]"}
+    payload.update(fields)
+    print(json.dumps(payload), flush=True)
+
+
 def call_agent(obs) -> AIRENAction:
     services_summary = {
         name: f"{s['status']} | latency={s['latency_ms']}ms | err={s['error_rate']:.0%} | cpu={s['cpu_pct']}%"
@@ -116,9 +124,12 @@ def run_episode(env: AIRENEnv, incident_type: str, seed: int, ep_num: int) -> Di
     result = env.reset(incident_type=incident_type, seed=seed)
     obs = result.observation
 
-    log({"event": "[START]", "episode_id": episode_id,
-         "incident_type": obs.incident_type, "severity": obs.severity,
-         "timestamp": t0})
+    structured_log("START", {
+         "episode_id": episode_id,
+         "incident_type": obs.incident_type,
+         "severity": obs.severity,
+         "timestamp": t0,
+    })
 
     actions_taken = []
     cumulative_reward = 0.0
@@ -134,11 +145,17 @@ def run_episode(env: AIRENEnv, incident_type: str, seed: int, ep_num: int) -> Di
         step_tokens = len((action.reasoning or "").split()) * 2
         total_tokens += step_tokens
 
-        log({"event": "[STEP]", "episode_id": episode_id, "step": step + 1,
-             "action_type": action.action_type, "target": action.target,
+        structured_log("STEP", {
+             "episode_id": episode_id,
+             "step": step + 1,
+             "action_type": action.action_type,
+             "target": action.target,
              "reasoning": (action.reasoning or "")[:150],
-             "reward": result.reward, "system_health": obs.system_health,
-             "action_success": obs.action_success, "timestamp": time.time()})
+             "reward": result.reward,
+             "system_health": obs.system_health,
+             "action_success": obs.action_success,
+             "timestamp": time.time(),
+        })
 
         if obs.done:
             break
@@ -160,7 +177,8 @@ def run_episode(env: AIRENEnv, incident_type: str, seed: int, ep_num: int) -> Di
     total_tokens += judge_result.tokens_used
     total_cost = tokens_to_usd(total_tokens, MODEL_NAME)
 
-    log({"event": "[END]", "episode_id": episode_id,
+    structured_log("END", {
+         "episode_id": episode_id,
          "incident_type": incident_type,
          "final_health": obs.system_health,
          "resolved": state.incident_resolved,
@@ -170,7 +188,8 @@ def run_episode(env: AIRENEnv, incident_type: str, seed: int, ep_num: int) -> Di
          "total_time_s": round(time.time() - t0, 3),
          "total_tokens": total_tokens,
          "total_cost_usd": round(total_cost, 6),
-         "timestamp": time.time()})
+         "timestamp": time.time(),
+    })
 
     return {
         "incident_type": incident_type,
