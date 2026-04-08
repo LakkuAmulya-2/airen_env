@@ -71,11 +71,17 @@ def log(obj: Dict[str, Any]) -> None:
 
 
 def structured_log(event: str, fields: Dict[str, Any]) -> None:
-    label = " ".join(f"{k}={v}" for k, v in fields.items())
-    print(f"[{event}] {label}", flush=True)
-    payload = {"event": f"[{event}]"}
-    payload.update(fields)
-    print(json.dumps(payload), flush=True)
+    parts = []
+    for k, v in fields.items():
+        if isinstance(v, str):
+            value = v
+        else:
+            try:
+                value = json.dumps(v, ensure_ascii=False)
+            except Exception:
+                value = str(v)
+        parts.append(f"{k}={value}")
+    print(f"[{event}] {' '.join(parts)}", flush=True)
 
 
 def call_agent(obs) -> AIRENAction:
@@ -125,8 +131,8 @@ def run_episode(env: AIRENEnv, incident_type: str, seed: int, ep_num: int) -> Di
     obs = result.observation
 
     structured_log("START", {
+         "task": obs.incident_type,
          "episode_id": episode_id,
-         "incident_type": obs.incident_type,
          "severity": obs.severity,
          "timestamp": t0,
     })
@@ -148,12 +154,11 @@ def run_episode(env: AIRENEnv, incident_type: str, seed: int, ep_num: int) -> Di
         structured_log("STEP", {
              "episode_id": episode_id,
              "step": step + 1,
+             "reward": round(result.reward or 0.0, 3),
              "action_type": action.action_type,
              "target": action.target,
-             "reasoning": (action.reasoning or "")[:150],
-             "reward": result.reward,
-             "system_health": obs.system_health,
              "action_success": obs.action_success,
+             "system_health": obs.system_health,
              "timestamp": time.time(),
         })
 
@@ -178,12 +183,12 @@ def run_episode(env: AIRENEnv, incident_type: str, seed: int, ep_num: int) -> Di
     total_cost = tokens_to_usd(total_tokens, MODEL_NAME)
 
     structured_log("END", {
+         "task": incident_type,
          "episode_id": episode_id,
-         "incident_type": incident_type,
-         "final_health": obs.system_health,
+         "score": round(cumulative_reward, 3),
+         "steps": len(actions_taken),
          "resolved": state.incident_resolved,
-         "cumulative_reward": round(cumulative_reward, 3),
-         "steps_taken": len(actions_taken),
+         "final_health": obs.system_health,
          "diagnosis_quality": judge_result.diagnosis_quality,
          "total_time_s": round(time.time() - t0, 3),
          "total_tokens": total_tokens,
