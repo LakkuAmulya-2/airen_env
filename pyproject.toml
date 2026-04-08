@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "airen-env"
+version = "2.0.0"
+description = "OpenEnv multi-step RL environment for AI production incident response"
+requires-python = ">=3.10"
+dependencies = [
+    "openenv-core>=0.1.0",
+    "fastapi>=0.104.0",
+    "uvicorn>=0.24.0",
+    "pydantic>=2.0.0",
+    "openai>=1.0.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0", "httpx>=0.24.0"]
+
+[project.scripts]
+server = "airen_env.server.app:main"
+
+[tool.setuptools.packages.find]
+where = [".."]
+include = ["airen_env*"]
