@@ -20,6 +20,10 @@ from typing import Any, Dict, List, Optional
 from openai import OpenAI
 
 
+def _clamp_score(score: float) -> float:
+    return max(0.001, min(0.999, round(score, 3)))
+
+
 @dataclass
 class AIRENJudgeResult:
     rule_score: float
@@ -96,7 +100,7 @@ class AIRENLLMJudge:
             return AIRENJudgeResult(
                 rule_score=rule_score,
                 llm_score=None,
-                final_score=rule_score,
+                final_score=_clamp_score(rule_score),
                 diagnosis_quality=self._quality_label(rule_score),
                 reasoning_feedback="Rule-based score confident — LLM judge skipped.",
                 judge_used="rules_only",
@@ -126,8 +130,8 @@ Correct approach was: {correct_actions} on {correct_targets}"""
             raw = completion.choices[0].message.content or "{}"
             tokens = completion.usage.total_tokens if completion.usage else 0
             data = json.loads(raw)
-            llm_score = max(0.0, min(1.0, float(data.get("score", rule_score))))
-            final = round(self.RULE_WEIGHT * rule_score + self.LLM_WEIGHT * llm_score, 3)
+            llm_score = _clamp_score(float(data.get("score", rule_score)))
+            final = _clamp_score(round(self.RULE_WEIGHT * rule_score + self.LLM_WEIGHT * llm_score, 3))
             self._call_count += 1
             self._total_tokens += tokens
 
@@ -145,7 +149,7 @@ Correct approach was: {correct_actions} on {correct_targets}"""
             return AIRENJudgeResult(
                 rule_score=rule_score,
                 llm_score=None,
-                final_score=rule_score,
+                final_score=_clamp_score(rule_score),
                 diagnosis_quality=self._quality_label(rule_score),
                 reasoning_feedback=f"LLM judge failed: {e}",
                 judge_used="rules_only_fallback",

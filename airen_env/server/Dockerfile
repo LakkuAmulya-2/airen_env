@@ -18,6 +18,7 @@ ENV PYTHONPATH=/app
 ENV MAX_CONCURRENT_ENVS=64
 ENV ENABLE_WEB_INTERFACE=true
 ENV ALLOW_SEED_FALLBACK=1
+ENV DISABLE_LLM_SCENARIOS=1
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1

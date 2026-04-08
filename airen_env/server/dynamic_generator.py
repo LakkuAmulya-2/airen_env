@@ -393,6 +393,7 @@ class DynamicIncidentGenerator:
             temperature=float(os.environ.get("GENERATOR_TEMPERATURE", "0.9")),
             max_tokens=int(os.environ.get("GENERATOR_MAX_TOKENS", "2000")),
             response_format={"type": "json_object"},
+            timeout=15.0,  # 15s hard timeout — never hang the validator
         )
 
         raw = completion.choices[0].message.content or "{}"
