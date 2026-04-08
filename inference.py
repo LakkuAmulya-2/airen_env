@@ -84,6 +84,11 @@ def structured_log(event: str, fields: Dict[str, Any]) -> None:
     print(f"[{event}] {' '.join(parts)}", flush=True)
 
 
+def clamp_score(score: float) -> float:
+    """Clamp score to (0, 1) exclusive bounds: strictly between 0 and 1."""
+    return max(0.001, min(0.999, score))
+
+
 def call_agent(obs) -> AIRENAction:
     services_summary = {
         name: f"{s['status']} | latency={s['latency_ms']}ms | err={s['error_rate']:.0%} | cpu={s['cpu_pct']}%"
@@ -185,7 +190,7 @@ def run_episode(env: AIRENEnv, incident_type: str, seed: int, ep_num: int) -> Di
     structured_log("END", {
          "task": incident_type,
          "episode_id": episode_id,
-         "score": round(cumulative_reward, 3),
+         "score": round(clamp_score(cumulative_reward), 3),
          "steps": len(actions_taken),
          "resolved": state.incident_resolved,
          "final_health": obs.system_health,
@@ -200,7 +205,7 @@ def run_episode(env: AIRENEnv, incident_type: str, seed: int, ep_num: int) -> Di
         "incident_type": incident_type,
         "final_health": obs.system_health,
         "resolved": state.incident_resolved,
-        "cumulative_reward": round(cumulative_reward, 3),
+        "cumulative_reward": round(clamp_score(cumulative_reward), 3),
         "steps": len(actions_taken),
         "diagnosis_quality": judge_result.diagnosis_quality,
         "judge_score": judge_result.final_score,
