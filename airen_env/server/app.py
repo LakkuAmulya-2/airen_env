@@ -207,6 +207,13 @@ else:
     )
 
 
+@app.get("/", include_in_schema=False)
+async def root_redirect():
+    """Redirect root to Gradio UI for HF Spaces compatibility."""
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(url="/web", status_code=307)
+
+
 # ── /ui dashboard ─────────────────────────────────────────────────────────────
 
 _UI_HTML = """<!DOCTYPE html>
