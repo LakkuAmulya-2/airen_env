@@ -48,6 +48,10 @@ from copy import deepcopy
 from typing import Any, Dict, List, Optional, Tuple
 from uuid import uuid4
 
+
+def _clamp_score(score: float) -> float:
+    return max(0.001, min(0.999, round(score, 3)))
+
 from openenv.core.env_server.interfaces import Environment
 
 try:
@@ -864,6 +868,9 @@ class AIRENEnvironment(Environment):
             "random_expected_delta": round(_random_expected_delta, 3),
         }
 
+        final_reward = judge_result.final_score if judge_result else rb.total
+        final_reward = _clamp_score(final_reward)
+
         return AIRENObservation(
             incident_id=scenario.incident_id,
             incident_type=scenario.incident_type,
@@ -900,7 +907,7 @@ class AIRENEnvironment(Environment):
             judge_reasoning=judge_result.reasoning_feedback if judge_result else None,
             metadata=metadata,
             done=done,
-            reward=judge_result.final_score if judge_result else rb.total,
+            reward=final_reward,
         )
 
     # ── Properties ────────────────────────────────────────────────────────────

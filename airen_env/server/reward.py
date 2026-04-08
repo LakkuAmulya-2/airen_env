@@ -21,6 +21,10 @@ from dataclasses import dataclass
 from typing import List, Optional
 
 
+def _clamp_score(score: float) -> float:
+    return max(0.001, min(0.999, round(score, 3)))
+
+
 @dataclass
 class RewardBreakdown:
     total: float
@@ -188,7 +192,7 @@ def compute_reward(
         - 0.04 * cost
         - downtime
     )
-    total = max(0.0, min(1.0, round(total, 3)))
+    total = _clamp_score(total)
 
     return RewardBreakdown(
         total=total,

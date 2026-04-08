@@ -208,7 +208,7 @@ def run_episode(env: AIRENEnv, incident_type: str, seed: int, ep_num: int) -> Di
         "cumulative_reward": round(clamp_score(cumulative_reward), 3),
         "steps": len(actions_taken),
         "diagnosis_quality": judge_result.diagnosis_quality,
-        "judge_score": judge_result.final_score,
+        "judge_score": round(clamp_score(judge_result.final_score), 3) if judge_result else None,
         "total_tokens": total_tokens,
         "total_cost_usd": total_cost,
     }
