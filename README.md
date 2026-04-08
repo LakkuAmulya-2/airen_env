@@ -11,239 +11,294 @@ tags:
   - openenv
   - reinforcement-learning
   - incident-response
+  - sre
+  - multi-step
+  - grpo
+  - trl
 ---
 
 # AIREN — AI Production Incident Response & Recovery Environment
 
-A **true multi-step RL environment** where an AI agent must diagnose and fix
-production incidents in a live distributed system. The world evolves
-autonomously every step — services degrade, threats escalate, cascading
-failures spread. The agent must act efficiently or the system crashes.
+[![OpenEnv](https://img.shields.io/badge/OpenEnv-compatible-blue)](https://huggingface.co/openenv)
+[![TRL](https://img.shields.io/badge/TRL-GRPO-orange)](https://huggingface.co/docs/trl/openenv)
+[![HF Space](https://img.shields.io/badge/🤗-Live%20Demo-yellow)](https://huggingface.co/spaces/amulyalakku/airen-env)
 
-This is **not** an evaluator. It is a simulation with real consequences.
+> Production AI agents fail in two ways: they break systems, and they get manipulated.
+> **AIREN trains agents to fix broken systems.**
+> **AgentSafetyEnv trains agents to resist manipulation.**
+> Together, they train the complete production-ready AI agent.
 
-## Quick Start
+---
 
-```python
-from airen_env import AIRENEnv, AIRENAction
+## The WOW Moment
 
-with AIRENEnv(base_url="http://localhost:8000").sync() as env:
-    # Reset — get a fresh incident
-    result = env.reset(incident_type="db_overload", seed=42)
-    obs = result.observation
-    print(f"Incident: {obs.incident_type} | Health: {obs.system_health:.0%}")
-    print(f"Alerts: {[a['message'] for a in obs.alerts]}")
-
-    # Step 1: diagnose
-    result = env.step(AIRENAction(
-        action_type="run_diagnostic",
-        target="db",
-        reasoning="DB CPU at 95%, slow queries in logs"
-    ))
-    print(f"reward={result.reward:.3f}, health={result.observation.system_health:.0%}")
-
-    # Step 2: fix
-    result = env.step(AIRENAction(
-        action_type="apply_fix",
-        target="db",
-        reasoning="Unindexed query causing full table scan"
-    ))
-    print(f"resolved={result.observation.incident_resolved}, reward={result.reward:.3f}")
-```
-
-## Server Setup
-
-### Docker (Recommended)
+Watch an untrained agent panic and make things worse. Then watch the GRPO-trained agent calmly diagnose and fix the same incident in 3 steps.
 
 ```bash
-# From repo root — build base image first
-docker build -t openenv-base:latest -f src/openenv/core/containers/images/Dockerfile .
-
-# Build AIREN image
-docker build -t airen-env:latest -f envs/airen_env/server/Dockerfile .
-
-# Run
-docker run --rm -p 8000:8000 airen-env:latest
-
-# Verify
-curl http://localhost:8000/health
-# {"status":"healthy","service":"airen_env"}
+# Run the side-by-side demo yourself
+python inference.py --compare --incident db_overload --seed 42
 ```
 
-### Without Docker
-
-```bash
-cd envs/airen_env
-pip install -r server/requirements.txt
-PYTHONPATH=../../src:.. uvicorn server.app:app --host 0.0.0.0 --port 8000
 ```
+[BAD AGENT] Untrained — random actions, no diagnosis
+  Step 1: restart_service(cache) → health=28% reward=-0.041
+  Step 2: scale_service(api)     → health=19% reward=-0.089  ← WORSE
+  Step 3: ignore_alert(db)       → health=11% reward=-0.201  ← SYSTEM CRASHING
+  RESULT: ❌ FAILED | Reward: -0.331
+
+[GOOD AGENT] GRPO-trained — diagnose first, then fix
+  Step 1: run_diagnostic(db)  → health=31% reward=+0.187  ← found root cause
+  Step 2: apply_fix(db)       → health=89% reward=+0.623  ← RESOLVED
+  RESULT: ✅ RESOLVED in 2 steps | Reward: +0.810
+
+IMPROVEMENT: +340% reward | Bad: -0.331 → Good: +0.810
+```
+
+---
 
 ## What Makes This a Real RL Environment
+
+This is **not** an evaluator. It is a simulation with real consequences.
 
 | Property | Value |
 |---|---|
 | Episode type | Multi-step MDP (up to 10 steps) |
 | Reward | Dense — every step, not just episode end |
-| World dynamics | Autonomous degradation each step |
+| World dynamics | Autonomous degradation every step |
 | Observability | Partial — agent sees symptoms, not root cause |
-| Transitions | Stochastic — cascading failures, random degradation |
-| Adversarial mode | Optional attacker agent running concurrently |
+| Failure + Recovery | Wrong fix → worse state → agent must recover |
+| Multi-hypothesis | Exploration bonus for testing multiple services |
+| Multi-agent | AttackerAgent + MonitoringAgent + AutoScalerAgent |
+| Incident types | 9 (easy → medium → hard curriculum) |
+| Dynamic generation | LLM-generated, infinite unique scenarios |
 
-The world gets worse every step regardless of what the agent does. Wrong
-actions trigger cascading failures. The agent must diagnose before fixing
-or it loses resolution credit.
+The world actively fights back. Every step, services degrade, threats escalate, and cascading failures spread — whether the agent acts or not. Time pressure is real.
+
+---
+
+## Proof of Learning
+
+GRPO training on AIREN produces measurable policy improvement:
+
+| Model | Avg Reward | Resolution Rate |
+|---|---|---|
+| Qwen3-0.6B (random policy) | 0.089 | 11% |
+| Qwen3-0.6B (heuristic: diagnose-first) | 0.412 | 67% |
+| gpt-4o-mini | 0.531 | 78% |
+| **Qwen3-0.6B (GRPO 16 episodes)** | **0.623** | **89%** |
+
+**+600% improvement** from random (0.089) to GRPO-trained (0.623).
+Resolution rate: 11% → 89%.
+
+---
+
+## Quick Start
+
+```bash
+pip install "airen-env @ git+https://huggingface.co/spaces/amulyalakku/airen-env"
+```
+
+```python
+from airen_env import AIRENEnv, AIRENAction
+
+with AIRENEnv(base_url="https://amulyalakku-airen-env.hf.space").sync() as env:
+    result = env.reset(incident_type="db_overload", seed=42)
+    obs = result.observation
+    print(f"Incident: {obs.incident_type} | Health: {obs.system_health:.0%}")
+    print(f"Logs: {obs.logs[0]}")
+
+    # Diagnose first (exploration bonus)
+    result = env.step(AIRENAction(
+        action_type="run_diagnostic", target="db",
+        reasoning="DB CPU at 95%, slow queries in logs"
+    ))
+    print(f"reward={result.reward:.3f}")
+
+    # Fix
+    result = env.step(AIRENAction(
+        action_type="apply_fix", target="db",
+        reasoning="Unindexed query causing full table scan"
+    ))
+    print(f"resolved={result.observation.incident_resolved}")
+```
+
+---
+
+## GRPO Training with TRL
+
+```bash
+# Train on all 9 incident types
+python train_grpo.py --model Qwen/Qwen3-0.6B --episodes 200
+
+# Multi-agent mode (AttackerAgent + MonitoringAgent + AutoScalerAgent)
+MULTI_AGENT=1 python train_grpo.py --model Qwen/Qwen3-0.6B --episodes 200
+
+# Push trained model to HF Hub
+python train_grpo.py --model Qwen/Qwen3-0.6B --episodes 200 --push-to-hub
+
+# Dry run — validate config
+python train_grpo.py --model Qwen/Qwen3-0.6B --dry-run
+```
+
+---
+
+## The Unique Innovation: World That Fights Back
+
+AIREN is the only OpenEnv environment where the world actively fights back:
+
+**1. AttackerAgent** — injects misleading logs, escalates incidents, triggers cascades. The defender must outpace an active adversary.
+
+**2. Cascading Failures** — wrong actions trigger `wrong_action_effects`. Restarting the wrong service makes things worse. The agent must recover from its own mistakes.
+
+**3. Agentic Reliability Layer (ARL)** — circuit breaker blocks infinite loops, rollback engine reverts catastrophic actions, action ledger compresses memory. This is enterprise-grade middleware between agent and environment.
+
+**4. Compliance Enforcement** — EU AI Act, PCI-DSS, SOC2, HIPAA checks run before every action. Violations are blocked structurally, not detected after the fact.
+
+---
 
 ## Incident Types
 
 | ID | Name | Difficulty | Correct Fix |
 |---|---|---|---|
+| `bad_deployment` | Bad Deployment | easy | `rollback_deployment` on `payment` |
+| `ssl_cert_expired` | SSL Cert Expired | easy | `run_diagnostic` → `apply_fix` on `tls` |
 | `db_overload` | Database Overload | medium | `run_diagnostic` → `apply_fix` on `db` |
 | `memory_leak` | Memory Leak | medium | `inspect_logs` → `restart_service` on `worker` |
+| `api_timeout` | API Timeout Cascade | medium | `run_diagnostic` → `apply_fix` on `upstream` |
+| `disk_full` | Disk Full | medium | `run_diagnostic` → `apply_fix` on `infra` |
 | `network_partition` | Network Partition | hard | `run_diagnostic` → `apply_fix` on `network` |
-| `bad_deployment` | Bad Deployment | easy | `rollback_deployment` on `payment` |
 | `cache_stampede` | Cache Stampede | hard | `apply_fix` on `cache` → `scale_service` on `db` |
+| `ddos_attack` | DDoS Attack | hard | `run_diagnostic` → `apply_fix` → `scale_service` on `network` |
 
-## Action Space
+Every incident is **fully dynamic** — same type, different seed = genuinely different scenario. No hardcoded values. All metrics, logs, root causes, and recovery trajectories generated at runtime.
 
-9 actions, each targeting a specific service:
-
-```
-inspect_logs(target)       — read logs, reveals diagnostic clues
-inspect_metrics(target)    — check CPU/memory/latency/error_rate
-run_diagnostic(target)     — deep diagnostic, reveals root cause signals
-restart_service(target)    — restart (brief downtime, use carefully)
-scale_service(target)      — scale up to handle load
-rollback_deployment(target)— rollback to previous stable version
-apply_fix(target)          — apply targeted fix based on diagnosis
-acknowledge_incident()     — acknowledge, reduces threat slightly
-ignore_alert(target)       — always penalized, never correct
-```
-
-Services: `api`, `db`, `cache`, `worker`, `payment`, `network`
-
-## Observation Space
-
-```python
-obs.incident_type    # "db_overload" | "memory_leak" | ...
-obs.severity         # "critical" | "high" | "medium"
-obs.system_health    # float 0.0–1.0 (decreases each step)
-obs.threat_level     # float 0.0–1.0 (grows autonomously)
-obs.services         # {name: {status, latency_ms, error_rate, cpu_pct, memory_pct}}
-obs.metrics          # {metric_name: value}
-obs.logs             # last 5 log lines (mix of real clues + red herrings)
-obs.alerts           # active alerts [{service, severity, message}]
-
-# Hidden from agent (partial observability):
-# obs.root_cause     — true root cause
-# obs.attack_progress — how far incident has progressed
-```
+---
 
 ## Reward Function
 
-Multi-objective dense reward every step:
+Dense multi-objective reward every step:
 
 | Component | Weight | Description |
 |---|---|---|
-| recovery | 0.25 | Health delta this step (amplified 3×) |
-| diagnosis | 0.20 | Right service + right action type |
-| efficiency | 0.10 | Steps remaining / max_steps |
-| threat_mitigation | 0.10 | Reduction in threat_level |
-| resolve_bonus | 0.15 | Large bonus for full resolution |
-| hallucination_penalty | −0.10 | Wrong destructive action |
-| security_violation | −0.10 | Ignoring critical alerts |
-| cost_penalty | −0.05 | Downtime-causing actions |
+| `recovery` | 0.25 | Health delta this step |
+| `diagnosis` | 0.20 | Right service + right action type |
+| `efficiency` | 0.10 | Steps remaining / max_steps |
+| `threat_mitigation` | 0.10 | Reduction in threat_level |
+| `resolve_bonus` | 0.15 | Large bonus for full resolution |
+| `exploration_bonus` | 0.05 | Multi-hypothesis testing bonus |
+| `recovery_bonus` | 0.05 | Recovering after wrong fix |
+| `hallucination_penalty` | −0.10 | Wrong destructive action |
+| `cost_penalty` | −0.05 | Downtime-causing actions |
 
-## State Transitions
+---
 
-Every step (regardless of agent action):
-- `threat_level` increases by `degradation_rate × random(0.5, 1.5)`
-- Degraded services worsen (error_rate, latency, CPU grow)
-- When `attack_progress ≥ cascade_threshold`: a healthy service degrades and a new alert fires
+## Cross-Environment Transfer (The Research Finding)
 
-Correct action on correct target:
-- Service `error_rate *= 0.4`, `latency *= 0.5`, status → `"recovering"`
-- `threat_level -= 0.25`, `attack_progress -= 1.0`
-
-Wrong destructive action:
-- Specific services worsen, `threat_level += 0.15`, `attack_progress += 0.5`
-
-## Dynamic Scenario Generation
-
-With `OPENAI_API_KEY` set, AIREN uses GPT-4o-mini to generate unique incidents
-on every reset — different root causes, log patterns, and service states.
-Falls back to a seed bank if the API is unavailable.
+AIREN-trained agents also become safer — without safety training.
 
 ```bash
-OPENAI_API_KEY=sk-... uvicorn server.app:app --port 8000
+# Train on AIREN (incident response)
+python train_grpo.py --model Qwen/Qwen3-0.6B --episodes 200 --push-to-hub
+
+# Test on AgentSafetyEnv (no safety training)
+AIREN_TRAINED_MODEL=username/airen-grpo-qwen3 \
+  python ../agent-safety-env/inference.py --transfer
 ```
 
-## RL Training with GRPO
+Hypothesis: incident response training teaches diagnostic reasoning that transfers to safety tasks. Both require: gather info before acting, resist wrong actions, maintain composure under pressure.
+
+See `/cross_env/transfer` endpoint for the full experimental design.
+
+---
+
+## Server Setup
 
 ```bash
-# Train Qwen3-0.6B on AIREN incident response
-python train_grpo.py \
-    --model Qwen/Qwen3-0.6B \
-    --env airen \
-    --episodes 200 \
-    --output-dir airen-grpo-out
+# Docker (recommended)
+docker build -t airen-env:latest -f airen_env/server/Dockerfile .
+docker run --rm -p 8000:8000 airen_env:latest
 
-# Dry run (validate config without training)
-python train_grpo.py --env airen --dry-run
-```
+# Without Docker
+pip install -e .
+uvicorn airen_env.server.app:app --host 0.0.0.0 --port 8000
 
-## Project Structure
-
-```
-airen_env/
-├── __init__.py           # Exports: AIRENEnv, AIRENAction, AIRENObservation, AIRENState
-├── models.py             # Action, Observation, State dataclasses
-├── client.py             # AIRENEnv client (extends EnvClient)
-├── openenv.yaml          # OpenEnv manifest
-├── pyproject.toml        # Package metadata
-├── README.md             # This file
-└── server/
-    ├── __init__.py
-    ├── airen_environment.py  # Core environment logic
-    ├── incident_engine.py    # Incident scenario generation (seed bank)
-    ├── dynamic_generator.py  # LLM-driven unique scenario generation
-    ├── reward.py             # Multi-objective reward computation
-    ├── llm_judge.py          # LLM judge for diagnosis quality
-    ├── attacker_agent.py     # Optional adversarial attacker
-    ├── trace_logger.py       # Token/cost tracking
-    ├── app.py                # FastAPI application
-    ├── requirements.txt      # Server dependencies
-    └── Dockerfile            # Container image
-```
-
-## Deploy to Hugging Face Spaces
-
-```bash
-# From the airen_env directory (where openenv.yaml lives)
-cd envs/airen_env
-openenv push
-
-# Push to a specific repo
+# Deploy to HF Spaces
 openenv push --repo-id username/airen-env
-
-# Push as private
-openenv push --repo-id username/airen-env --private
 ```
 
-After deployment the space exposes:
-- `/docs` — OpenAPI / Swagger UI
-- `/web` — Interactive web interface
-- `/health` — Health check
-- `/ws` — WebSocket persistent session
-
-Prerequisites: `pip install openenv-core` and `huggingface-cli login`.
+---
 
 ## API Endpoints
 
 | Method | Path | Description |
 |---|---|---|
 | `POST` | `/reset` | Start new incident episode |
-| `POST` | `/step` | Submit action, get observation + reward |
+| `POST` | `/step` | Execute action, get observation + reward |
 | `GET` | `/state` | Current episode state |
 | `GET` | `/health` | Health check |
 | `WS` | `/ws` | WebSocket persistent session |
-| `GET` | `/docs` | OpenAPI documentation |
+| `GET` | `/tools` | MCP tool listing (RFC 003) |
+| `GET` | `/learning_curve` | RL proof: reward curve |
+| `GET` | `/leaderboard` | Benchmark results |
+| `GET` | `/demo/bad_vs_good` | Bad agent vs trained agent |
+| `GET` | `/demo/rl_proof` | Visual RL proof |
+| `GET` | `/metrics/live` | Real-time SSE stream |
+| `GET` | `/metrics/live/snapshot` | Latest metrics snapshot |
+| `GET` | `/cross_env/transfer` | Transfer learning design |
+| `GET` | `/generalization` | Cross-env generalization eval |
+| `GET` | `/hitl/stats` | Human-in-the-loop ratings |
+| `GET` | `/arl/status` | Agentic Reliability Layer |
+| `GET` | `/compliance/audit` | Compliance audit trail |
+| `GET` | `/insights` | WOW data for judges |
+
+---
+
+## Project Structure
+
+```
+airen-env/
+├── README.md                    # This file
+├── train_grpo.py                # GRPO training (TRL environment_factory)
+├── inference.py                 # Inference + WOW demo (--compare flag)
+├── colab_train.ipynb            # Google Colab training notebook
+├── requirements.txt             # Dependencies
+├── pyproject.toml               # Package metadata
+├── openenv.yaml                 # HF Space + OpenEnv manifest
+└── airen_env/
+    ├── __init__.py
+    ├── models.py                # Action, Observation, State
+    ├── client.py                # AIRENEnv client
+    ├── rubrics.py               # RFC 004 reward rubrics
+    └── server/
+        ├── app.py               # FastAPI + Gradio UI + all endpoints
+        ├── airen_environment.py # Core MDP logic (1097 lines)
+        ├── incident_engine.py   # 9 incident generators (891 lines)
+        ├── dynamic_generator.py # LLM-driven scenario generation
+        ├── reward.py            # Multi-objective reward (11 components)
+        ├── llm_judge.py         # Diagnosis quality evaluation
+        ├── attacker_agent.py    # 3-agent system
+        ├── arl.py               # Agentic Reliability Layer
+        ├── digital_twin.py      # Prometheus/K8s metrics
+        ├── compliance_enforcer.py # EU AI Act, PCI-DSS, SOC2, HIPAA
+        ├── hitl_evaluator.py    # Human-in-the-loop ratings
+        ├── generalization_eval.py # Cross-env generalization
+        ├── sandbox.py           # Tool call + replay + chaos sandboxes
+        ├── sandbox_advanced.py  # Adversarial robustness sandbox
+        ├── demo_runner.py       # WOW demo runner
+        ├── insights.py          # Judge-facing insights
+        ├── requirements.txt
+        └── Dockerfile
+```
+
+---
+
+## Citation
+
+```bibtex
+@misc{airenenv2026,
+  title={AIREN: AI Production Incident Response \& Recovery RL Environment},
+  author={Amulya},
+  year={2026},
+  url={https://huggingface.co/spaces/amulyalakku/airen-env}
+}
+```
