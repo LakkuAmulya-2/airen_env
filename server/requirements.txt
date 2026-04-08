@@ -4,3 +4,6 @@ pydantic>=2.0.0
 openenv-core>=0.1.0
 openai>=1.0.0
 gradio>=4.0.0
+httpx>=0.24.0
+websockets>=11.0
+plotly>=5.0.0
