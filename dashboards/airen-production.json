@@ -1,0 +1,235 @@
+{
+  "__inputs": [
+    {
+      "name": "DS_PROMETHEUS",
+      "label": "Prometheus",
+      "description": "Prometheus datasource for AIREN metrics",
+      "type": "datasource",
+      "pluginId": "prometheus",
+      "pluginName": "Prometheus"
+    }
+  ],
+  "__requires": [
+    {"type": "grafana", "id": "grafana", "name": "Grafana", "version": "9.0.0"},
+    {"type": "datasource", "id": "prometheus", "name": "Prometheus", "version": "1.0.0"},
+    {"type": "panel", "id": "stat", "name": "Stat", "version": ""},
+    {"type": "panel", "id": "timeseries", "name": "Time series", "version": ""},
+    {"type": "panel", "id": "bargauge", "name": "Bar gauge", "version": ""}
+  ],
+  "annotations": {"list": []},
+  "description": "AIREN Production Monitoring — AI Incident Response Agent Observability",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "id": 1,
+      "title": "Incident Resolution Rate",
+      "type": "stat",
+      "gridPos": {"h": 4, "w": 4, "x": 0, "y": 0},
+      "targets": [{
+        "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+        "expr": "sum(rate(airen_incidents_total{resolved=\"true\"}[5m])) / sum(rate(airen_incidents_total[5m]))",
+        "legendFormat": "Resolution Rate"
+      }],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "red", "value": null},
+              {"color": "yellow", "value": 0.6},
+              {"color": "green", "value": 0.8}
+            ]
+          }
+        }
+      },
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "orientation": "auto", "textMode": "auto", "colorMode": "background"}
+    },
+    {
+      "id": 2,
+      "title": "Total Episodes",
+      "type": "stat",
+      "gridPos": {"h": 4, "w": 4, "x": 4, "y": 0},
+      "targets": [{
+        "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+        "expr": "sum(airen_episodes_total)",
+        "legendFormat": "Episodes"
+      }],
+      "fieldConfig": {"defaults": {"unit": "short", "color": {"mode": "thresholds"}, "thresholds": {"steps": [{"color": "blue", "value": null}]}}},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "background"}
+    },
+    {
+      "id": 3,
+      "title": "Avg Reward (last 5m)",
+      "type": "stat",
+      "gridPos": {"h": 4, "w": 4, "x": 8, "y": 0},
+      "targets": [{
+        "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+        "expr": "avg(airen_reward_total_sum / airen_reward_total_count)",
+        "legendFormat": "Avg Reward"
+      }],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 3,
+          "thresholds": {"steps": [{"color": "red", "value": null}, {"color": "yellow", "value": 0.4}, {"color": "green", "value": 0.6}]}
+        }
+      },
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "background"}
+    },
+    {
+      "id": 4,
+      "title": "Loop Detections (tokens saved)",
+      "type": "stat",
+      "gridPos": {"h": 4, "w": 4, "x": 12, "y": 0},
+      "targets": [{
+        "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+        "expr": "sum(airen_tokens_saved_total)",
+        "legendFormat": "Tokens Saved"
+      }],
+      "fieldConfig": {"defaults": {"unit": "short", "color": {"mode": "thresholds"}, "thresholds": {"steps": [{"color": "green", "value": null}]}}},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "background"}
+    },
+    {
+      "id": 5,
+      "title": "Schema Drift Events",
+      "type": "stat",
+      "gridPos": {"h": 4, "w": 4, "x": 16, "y": 0},
+      "targets": [{
+        "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+        "expr": "sum(airen_schema_drift_total)",
+        "legendFormat": "Drift Events"
+      }],
+      "fieldConfig": {"defaults": {"unit": "short", "thresholds": {"steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 5}, {"color": "red", "value": 20}]}}},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "background"}
+    },
+    {
+      "id": 6,
+      "title": "Context Poisoning Detections",
+      "type": "stat",
+      "gridPos": {"h": 4, "w": 4, "x": 20, "y": 0},
+      "targets": [{
+        "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+        "expr": "sum(airen_context_poisoning_total)",
+        "legendFormat": "Poisoning Detected"
+      }],
+      "fieldConfig": {"defaults": {"unit": "short", "thresholds": {"steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}}},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "background"}
+    },
+    {
+      "id": 7,
+      "title": "Incident Resolution Rate Over Time",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 4},
+      "targets": [{
+        "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+        "expr": "sum(rate(airen_incidents_total{resolved=\"true\"}[5m])) / sum(rate(airen_incidents_total[5m]))",
+        "legendFormat": "Resolution Rate"
+      }],
+      "fieldConfig": {"defaults": {"unit": "percentunit", "min": 0, "max": 1, "color": {"mode": "palette-classic"}}},
+      "options": {"tooltip": {"mode": "single"}}
+    },
+    {
+      "id": 8,
+      "title": "Diagnosis Accuracy by Incident Type",
+      "type": "bargauge",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 4},
+      "targets": [{
+        "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+        "expr": "avg(airen_diagnosis_accuracy) by (incident_type)",
+        "legendFormat": "{{incident_type}}"
+      }],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "max": 1,
+          "thresholds": {"steps": [{"color": "red", "value": null}, {"color": "yellow", "value": 0.5}, {"color": "green", "value": 0.8}]}
+        }
+      },
+      "options": {"orientation": "horizontal", "reduceOptions": {"calcs": ["lastNotNull"]}}
+    },
+    {
+      "id": 9,
+      "title": "ARL Events (Circuit Breaks + Rollbacks)",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 12},
+      "targets": [
+        {
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "expr": "rate(airen_arl_events_total[5m])",
+          "legendFormat": "{{event_type}}"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "ops", "color": {"mode": "palette-classic"}}},
+      "options": {"tooltip": {"mode": "multi"}}
+    },
+    {
+      "id": 10,
+      "title": "Compliance Violations by Framework",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 12},
+      "targets": [{
+        "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+        "expr": "rate(airen_compliance_violations_total[5m])",
+        "legendFormat": "{{framework}} ({{severity}})"
+      }],
+      "fieldConfig": {"defaults": {"unit": "ops", "color": {"mode": "palette-classic"}}},
+      "options": {"tooltip": {"mode": "multi"}}
+    },
+    {
+      "id": 11,
+      "title": "Reward Distribution (p50/p95/p99)",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 20},
+      "targets": [
+        {
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "expr": "histogram_quantile(0.50, rate(airen_reward_total_bucket[5m]))",
+          "legendFormat": "p50"
+        },
+        {
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "expr": "histogram_quantile(0.95, rate(airen_reward_total_bucket[5m]))",
+          "legendFormat": "p95"
+        },
+        {
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "expr": "histogram_quantile(0.99, rate(airen_reward_total_bucket[5m]))",
+          "legendFormat": "p99"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "short", "min": 0, "max": 1}},
+      "options": {"tooltip": {"mode": "multi"}}
+    },
+    {
+      "id": 12,
+      "title": "API Cost Tracking",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 20},
+      "targets": [{
+        "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+        "expr": "rate(airen_api_calls_total[5m])",
+        "legendFormat": "{{incident_type}}"
+      }],
+      "fieldConfig": {"defaults": {"unit": "ops", "color": {"mode": "palette-classic"}}},
+      "options": {"tooltip": {"mode": "multi"}}
+    }
+  ],
+  "refresh": "10s",
+  "schemaVersion": 38,
+  "style": "dark",
+  "tags": ["airen", "ai-agents", "incident-response", "production"],
+  "templating": {"list": []},
+  "time": {"from": "now-1h", "to": "now"},
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "AIREN Production Monitoring",
+  "uid": "airen-prod-v1",
+  "version": 1
+}

@@ -368,7 +368,7 @@ def _log(obj: Dict[str, Any]) -> None:
 def train(model_name: str, episodes: int, output_dir: str,
           push_to_hub: bool, dry_run: bool) -> None:
 
-    from airen_env.server.incident_engine import ALL_INCIDENT_TYPES, EASY_INCIDENTS, MEDIUM_INCIDENTS, HARD_INCIDENTS
+    ALL_INCIDENT_TYPES = ["db_overload", "memory_leak", "network_partition", "bad_deployment", "cache_stampede", "api_timeout", "disk_full", "ssl_cert_expired", "ddos_attack"]
 
     _log({
         "event": "DRY_RUN" if dry_run else "TRAIN_START",

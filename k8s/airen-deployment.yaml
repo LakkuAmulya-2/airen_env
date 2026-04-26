@@ -1,0 +1,200 @@
+---
+# AIREN — Kubernetes Production Deployment (Upgrade #9)
+# High-availability deployment with auto-scaling, health checks, and observability.
+#
+# Deploy:
+#   kubectl apply -f k8s/airen-deployment.yaml
+#   kubectl get pods -l app=airen
+#   kubectl get svc airen-service
+#
+# Features:
+#   - 3 replicas minimum (HA)
+#   - Auto-scaling: 3-20 pods based on CPU
+#   - Liveness + Readiness probes
+#   - Prometheus metrics scraping
+#   - Resource limits (2Gi RAM, 2 CPU per pod)
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: airen
+  labels:
+    app.kubernetes.io/name: airen
+    app.kubernetes.io/component: environment
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: airen-config
+  namespace: airen
+data:
+  MULTI_AGENT: "1"
+  ENABLE_METRICS: "true"
+  ARL_ENABLED: "1"
+  COMPLIANCE_ENABLED: "1"
+  DIGITAL_TWIN: "1"
+  MAX_CONCURRENT_ENVS: "64"
+  LOG_LEVEL: "INFO"
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: airen-env
+  namespace: airen
+  labels:
+    app: airen
+    version: "2.0.0"
+    component: environment
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: airen
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: airen
+        version: "2.0.0"
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: "/metrics"
+    spec:
+      containers:
+        - name: airen
+          image: amulyalakku/airen-env:latest
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 8000
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: airen-config
+          env:
+            - name: HF_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: airen-secrets
+                  key: hf-token
+                  optional: true
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: airen-secrets
+                  key: openai-api-key
+                  optional: true
+          resources:
+            requests:
+              memory: "2Gi"
+              cpu: "1000m"
+            limits:
+              memory: "4Gi"
+              cpu: "2000m"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 2
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            failureThreshold: 30
+            periodSeconds: 10
+      terminationGracePeriodSeconds: 30
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: airen-service
+  namespace: airen
+  labels:
+    app: airen
+  annotations:
+    prometheus.io/scrape: "true"
+spec:
+  selector:
+    app: airen
+  ports:
+    - name: http
+      protocol: TCP
+      port: 80
+      targetPort: 8000
+  type: LoadBalancer
+
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: airen-hpa
+  namespace: airen
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: airen-env
+  minReplicas: 3
+  maxReplicas: 20
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
+
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: airen-pdb
+  namespace: airen
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: airen
+
+---
+# Optional: Prometheus ServiceMonitor (requires prometheus-operator)
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: airen-metrics
+  namespace: airen
+  labels:
+    app: airen
+spec:
+  selector:
+    matchLabels:
+      app: airen
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 15s

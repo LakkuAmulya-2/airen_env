@@ -1,0 +1,31 @@
+{
+  "episode_id": "test_ep_001",
+  "incident_type": "db_overload",
+  "seed": 42,
+  "attacker_seed": 0,
+  "actions": [
+    {
+      "action_type": "restart_service",
+      "target": "cache",
+      "reasoning": "wrong"
+    }
+  ],
+  "rewards": [
+    -0.5
+  ],
+  "health_trajectory": [
+    0.4,
+    0.2
+  ],
+  "resolved": false,
+  "final_health": 0.2,
+  "root_cause": "DB unindexed query",
+  "correct_actions": [
+    "apply_fix"
+  ],
+  "correct_targets": [
+    "db"
+  ],
+  "timestamp": 1777180637.6647217,
+  "metadata": {}
+}

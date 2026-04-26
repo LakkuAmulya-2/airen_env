@@ -39,12 +39,18 @@ from typing import Any, Dict, List, Optional
 from openai import OpenAI
 
 from airen_env import AIRENEnv, AIRENAction
-from airen_env.server.incident_engine import (
-    ALL_INCIDENT_TYPES, EASY_INCIDENTS, MEDIUM_INCIDENTS, HARD_INCIDENTS,
-    generate_incident,
-)
-from airen_env.server.llm_judge import AIRENLLMJudge
-from airen_env.server.trace_logger import tokens_to_usd
+import tenacity
+
+# Define constants locally to decouple completely from the server
+ALL_INCIDENT_TYPES = ["db_overload", "memory_leak", "network_partition", "bad_deployment", "cache_stampede", "api_timeout", "disk_full", "ssl_cert_expired", "ddos_attack"]
+EASY_INCIDENTS = ["bad_deployment", "ssl_cert_expired"]
+MEDIUM_INCIDENTS = ["db_overload", "memory_leak", "api_timeout", "disk_full"]
+HARD_INCIDENTS = ["network_partition", "cache_stampede", "ddos_attack"]
+
+def tokens_to_usd(tokens: int, model: str) -> float:
+    # Basic token cost simulator for decoupling
+    return tokens * 0.000001
+
 
 # ── Config ────────────────────────────────────────────────────────────────────
 API_BASE_URL = os.environ.get("API_BASE_URL", "https://router.huggingface.co/v1")
@@ -89,6 +95,11 @@ def clamp_score(score: float) -> float:
     return max(0.001, min(0.999, score))
 
 
+@tenacity.retry(
+    stop=tenacity.stop_after_attempt(3),
+    wait=tenacity.wait_exponential(multiplier=1, min=2, max=10),
+    reraise=True
+)
 def call_agent(obs) -> AIRENAction:
     services_summary = {
         name: f"{s['status']} | latency={s['latency_ms']}ms | err={s['error_rate']:.0%} | cpu={s['cpu_pct']}%"
@@ -112,7 +123,7 @@ def call_agent(obs) -> AIRENAction:
                 {"role": "system", "content": AGENT_SYSTEM},
                 {"role": "user", "content": user_content},
             ],
-            temperature=0.0,
+            temperature=0.2, # Explored from 0.0 to allow hypotheses exploration
             max_tokens=200,
             response_format={"type": "json_object"},
         )
@@ -171,20 +182,8 @@ def run_episode(env: AIRENEnv, incident_type: str, seed: int, ep_num: int) -> Di
             break
 
     state = env.state()
-    judge = AIRENLLMJudge()
-    from airen_env.server.incident_engine import generate_incident
-    scenario = generate_incident(incident_type, seed)
-    judge_result = judge.judge(
-        incident_type=incident_type,
-        root_cause=state.root_cause or "",
-        actions_taken=actions_taken,
-        final_health=obs.system_health,
-        incident_resolved=state.incident_resolved,
-        correct_actions=scenario.correct_actions,
-        correct_targets=scenario.correct_targets,
-        rule_score=cumulative_reward / max(len(actions_taken), 1),
-    )
-    total_tokens += judge_result.tokens_used
+    # The server already tracks metrics and assigns diagnosis_quality.
+    # By decoupling, the client relies on the environment's observation natively.
     total_cost = tokens_to_usd(total_tokens, MODEL_NAME)
 
     structured_log("END", {
@@ -194,7 +193,7 @@ def run_episode(env: AIRENEnv, incident_type: str, seed: int, ep_num: int) -> Di
          "steps": len(actions_taken),
          "resolved": state.incident_resolved,
          "final_health": obs.system_health,
-         "diagnosis_quality": judge_result.diagnosis_quality,
+         "diagnosis_quality": "N/A",  # Available via /state endpoint on server
          "total_time_s": round(time.time() - t0, 3),
          "total_tokens": total_tokens,
          "total_cost_usd": round(total_cost, 6),
@@ -207,8 +206,8 @@ def run_episode(env: AIRENEnv, incident_type: str, seed: int, ep_num: int) -> Di
         "resolved": state.incident_resolved,
         "cumulative_reward": round(clamp_score(cumulative_reward), 3),
         "steps": len(actions_taken),
-        "diagnosis_quality": judge_result.diagnosis_quality,
-        "judge_score": round(clamp_score(judge_result.final_score), 3) if judge_result else None,
+        "diagnosis_quality": "N/A",
+        "judge_score": None,
         "total_tokens": total_tokens,
         "total_cost_usd": total_cost,
     }

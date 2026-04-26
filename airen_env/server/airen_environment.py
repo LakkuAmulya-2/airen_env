@@ -68,6 +68,13 @@ try:
     from .digital_twin import enrich_observation, k8s_pod_state
     from .arl import AgenticReliabilityLayer, ARLDecision
     from .compliance_enforcer import StructuralComplianceEnforcer
+    # Self-evolving upgrades
+    from .self_evolving_curriculum import get_curriculum
+    from .reward_hacking_detector import get_hack_detector
+    from .agent_deadlock_detector import get_deadlock_detector
+    from .persistent_agent_memory import get_agent_memory
+    from .self_reward_judge import get_self_reward_judge
+    from .state_drift_monitor import get_drift_monitor
 except ImportError:
     from models import AIRENAction, AIRENObservation, AIRENState
     from server.dynamic_generator import get_generator
@@ -82,6 +89,13 @@ except ImportError:
     from server.digital_twin import enrich_observation, k8s_pod_state
     from server.arl import AgenticReliabilityLayer, ARLDecision
     from server.compliance_enforcer import StructuralComplianceEnforcer
+    # Self-evolving upgrades
+    from server.self_evolving_curriculum import get_curriculum
+    from server.reward_hacking_detector import get_hack_detector
+    from server.agent_deadlock_detector import get_deadlock_detector
+    from server.persistent_agent_memory import get_agent_memory
+    from server.self_reward_judge import get_self_reward_judge
+    from server.state_drift_monitor import get_drift_monitor
 
 
 def _build_inspect_clues(scenario: "IncidentScenario") -> Dict[str, Dict[str, List[str]]]:
@@ -322,6 +336,7 @@ class AIRENEnvironment(Environment):
         self._hypotheses_tested = []
         self._wrong_fixes_applied = 0
         self._recovery_attempts = 0
+        self._last_seed = seed  # for replay forensics
 
         generator = get_generator()
         scenario = generator.generate(
@@ -407,6 +422,39 @@ class AIRENEnvironment(Environment):
             difficulty=difficulty,
         )
 
+        # ── Observability: track episode start ────────────────────────────────
+        try:
+            from .observability import get_observability_dashboard
+            get_observability_dashboard().track_episode_start(
+                incident_type=scenario.incident_type,
+                severity=scenario.severity,
+            )
+        except Exception:
+            pass
+
+        # ── Persistent Memory: retrieve past experience ───────────────────────
+        try:
+            memory_result = get_agent_memory().retrieve_for_incident(
+                incident_type=scenario.incident_type,
+                current_health=health,
+            )
+            if memory_result.context_hint:
+                self._logs_buffer.append(memory_result.context_hint)
+        except Exception:
+            pass
+
+        # ── Reward Hacking Detector: reset episode ────────────────────────────
+        try:
+            get_hack_detector().reset_episode(eid)
+        except Exception:
+            pass
+
+        # ── Deadlock Detector: reset ──────────────────────────────────────────
+        try:
+            get_deadlock_detector().reset()
+        except Exception:
+            pass
+
         return AIRENObservation(
             incident_id=scenario.incident_id,
             incident_type=scenario.incident_type,
@@ -472,6 +520,15 @@ class AIRENEnvironment(Environment):
                 blocked_v = [v for v in compliance_decision.violations if v.blocked]
                 block_msg = blocked_v[0].reason if blocked_v else "Compliance violation"
                 self._logs_buffer.append(f"[COMPLIANCE] BLOCKED: {block_msg[:100]}")
+                # Track in observability
+                try:
+                    from .observability import get_observability_dashboard
+                    for v in compliance_decision.violations:
+                        get_observability_dashboard().track_compliance_violation(
+                            v.framework, v.severity, v.blocked
+                        )
+                except Exception:
+                    pass
                 from .reward import compute_reward as _cr
                 rb_comp = _cr(
                     action_type=action.action_type, target=action.target,
@@ -547,6 +604,55 @@ class AIRENEnvironment(Environment):
                 current_health=health_before,
                 incident_type=scenario.incident_type,
             )
+
+        # ── Upgrade #2: Infinite Loop Detection ──────────────────────────────
+        try:
+            from .infinite_loop_detector import get_loop_breaker
+            loop_breaker = get_loop_breaker()
+            loop_detection = loop_breaker.detect_loop(
+                action.action_type, action.parameters or {}, 0
+            )
+            if loop_detection.loop_detected and loop_detection.recommendation in ("BREAK_LOOP", "CIRCUIT_OPEN"):
+                loop_action = loop_breaker.break_loop(
+                    loop_detection, self._state.steps_taken, self.MAX_STEPS
+                )
+                self._logs_buffer.append(
+                    f"[LOOP_BREAKER] {loop_action.reason}: {loop_action.suggestion[:80]}"
+                )
+                # Track in observability
+                try:
+                    from .observability import get_observability_dashboard
+                    get_observability_dashboard().track_loop_detection(
+                        loop_detection.pattern, loop_action.estimated_tokens_saved
+                    )
+                    get_observability_dashboard().track_arl_event("circuit_break")
+                except Exception:
+                    pass
+            loop_breaker.record_action(action.action_type, action.parameters or {})
+        except Exception:
+            pass
+
+        # ── Upgrade #6: Context Poisoning Scan ───────────────────────────────
+        if action.reasoning:
+            try:
+                from .context_poisoning_detector import get_context_defender
+                ctx_defender = get_context_defender()
+                poison_detection = ctx_defender.scan_action_reasoning(
+                    action.reasoning, action.action_type, action.target
+                )
+                if poison_detection and poison_detection.severity == "CRITICAL":
+                    self._logs_buffer.append(
+                        f"[CONTEXT_POISON] CRITICAL: {poison_detection.attack_type} detected in reasoning"
+                    )
+                    try:
+                        from .observability import get_observability_dashboard
+                        get_observability_dashboard().track_context_poisoning(
+                            poison_detection.attack_type, True
+                        )
+                    except Exception:
+                        pass
+            except Exception:
+                pass
             if not arl_decision.proceed:                # Circuit breaker blocked — return forced message without executing
                 self._arl.record_blocked(
                     step=self._state.steps_taken,
@@ -764,6 +870,93 @@ class AIRENEnvironment(Environment):
 
         done = self._state.incident_resolved or self._state.steps_taken >= self.MAX_STEPS
 
+        # ── Per-step: Reward Hacking Detection ───────────────────────────────
+        hack_penalty_explanation = ""
+        try:
+            hack_detector = get_hack_detector()
+            hack_detection = hack_detector.check_step(
+                action_type=action.action_type,
+                target=action.target,
+                reasoning=action.reasoning or "",
+                health_before=health_before,
+                health_after=health_after,
+                reward_before_hack_check=rb.total,
+                incident_resolved=resolved,
+                step_number=self._state.steps_taken,
+                max_steps=self.MAX_STEPS,
+                correct_targets=scenario.correct_targets,
+                correct_actions=scenario.correct_actions,
+                exploration_bonus=rb.exploration_bonus,
+                resolve_bonus=rb.resolve_bonus,
+            )
+            if hack_detection:
+                adjusted, hack_penalty_explanation = hack_detector.apply_penalty(
+                    rb.total, hack_detection
+                )
+                # Adjust cumulative reward
+                self._state.cumulative_reward -= rb.total
+                self._state.cumulative_reward += adjusted
+        except Exception:
+            pass
+
+        # ── Per-step: Persistent Memory recording ────────────────────────────
+        try:
+            get_agent_memory().record_step(
+                action_type=action.action_type,
+                target=action.target,
+                reasoning=action.reasoning or "",
+                reward=rb.total,
+                health=health_after,
+            )
+        except Exception:
+            pass
+
+        # ── Per-step: Self-Reward augmentation ───────────────────────────────
+        self_reward_info = {}
+        try:
+            self_judge = get_self_reward_judge()
+            self_result = self_judge.evaluate(
+                incident_type=scenario.incident_type,
+                action_type=action.action_type,
+                target=action.target,
+                reasoning=action.reasoning or "",
+                health_before=health_before,
+                health_after=health_after,
+                env_reward=rb.total,
+                correct_targets=scenario.correct_targets,
+                correct_actions=scenario.correct_actions,
+                step_number=self._state.steps_taken,
+            )
+            self_reward_info = {
+                "self_score": self_result.self_score,
+                "self_calibrated": self_result.calibrated_score,
+                "self_critique": self_result.self_critique,
+                "self_judge_used": self_result.judge_used,
+            }
+        except Exception:
+            pass
+
+        # ── Multi-agent: Deadlock detection ──────────────────────────────────
+        if self._multi_agent:
+            try:
+                deadlock_detector = get_deadlock_detector()
+                deadlock_detector.record_agent_action(
+                    "defender", action.action_type, action.target
+                )
+                deadlock_event = deadlock_detector.detect_deadlock(
+                    self._state.steps_taken, ["defender", "attacker", "monitor"]
+                )
+                if deadlock_event:
+                    resolution = deadlock_detector.resolve_deadlock(
+                        deadlock_event, ["defender", "attacker", "monitor"]
+                    )
+                    self._logs_buffer.append(
+                        f"[DEADLOCK] {deadlock_event.deadlock_type}: "
+                        f"{resolution.get('inject_message', '')[:80]}"
+                    )
+            except Exception:
+                pass
+
         # ── 6. LLM judge at episode end ───────────────────────────────────────
         judge_result = None
         judge_tokens = 0
@@ -780,6 +973,91 @@ class AIRENEnvironment(Environment):
                 rule_score=rb.total,
             )
             judge_tokens = judge_result.tokens_used
+
+            # ── Observability tracking ────────────────────────────────────────
+            try:
+                from .observability import get_observability_dashboard
+                obs_dash = get_observability_dashboard()
+                obs_dash.track_episode_end(
+                    incident_type=scenario.incident_type,
+                    resolved=self._state.incident_resolved,
+                    steps_taken=self._state.steps_taken,
+                    cumulative_reward=self._state.cumulative_reward,
+                    diagnosis_score=judge_result.final_score if judge_result else rb.diagnosis_score,
+                    api_calls=judge_tokens // 100 if judge_tokens else 0,
+                )
+            except Exception:
+                pass
+
+            # ── Incident Replay Forensics recording ───────────────────────────
+            try:
+                from .incident_replay import get_replay_forensics
+                forensics = get_replay_forensics()
+                action_records = []
+                for i, act_str in enumerate(self._state.actions_taken):
+                    parts = act_str.split(":")
+                    action_records.append({
+                        "action_type": parts[0] if parts else act_str,
+                        "target": parts[1] if len(parts) > 1 else "",
+                        "reasoning": "",
+                        "step": i + 1,
+                    })
+                forensics.record_episode(
+                    episode_id=self._state.episode_id or f"ep_{int(time.time())}",
+                    incident_type=scenario.incident_type,
+                    seed=getattr(self, "_last_seed", 0),
+                    actions=action_records,
+                    rewards=[],
+                    health_trajectory=list(self._state.system_health_history),
+                    resolved=self._state.incident_resolved,
+                    final_health=health_after,
+                    root_cause=scenario.root_cause,
+                    correct_actions=scenario.correct_actions,
+                    correct_targets=scenario.correct_targets,
+                    attacker_seed=getattr(self, "_last_attacker_seed", 0),
+                )
+            except Exception:
+                pass
+
+            # ── Self-Evolving Curriculum: record episode outcome ───────────────
+            try:
+                get_curriculum().record_episode(
+                    incident_type=scenario.incident_type,
+                    reward=self._state.cumulative_reward,
+                    resolved=self._state.incident_resolved,
+                    steps_taken=self._state.steps_taken,
+                )
+            except Exception:
+                pass
+
+            # ── Persistent Memory: consolidate episode ────────────────────────
+            try:
+                get_agent_memory().consolidate_episode(
+                    episode_id=self._state.episode_id or f"ep_{int(time.time())}",
+                    incident_type=scenario.incident_type,
+                    seed=getattr(self, "_last_seed", 0),
+                    resolved=self._state.incident_resolved,
+                    steps_taken=self._state.steps_taken,
+                    cumulative_reward=self._state.cumulative_reward,
+                    final_health=health_after,
+                    root_cause=scenario.root_cause,
+                    correct_actions=scenario.correct_actions,
+                    correct_targets=scenario.correct_targets,
+                )
+            except Exception:
+                pass
+
+            # ── State Drift Monitor: record episode ───────────────────────────
+            try:
+                action_types = [a.split(":")[0] for a in self._state.actions_taken]
+                get_drift_monitor().record_episode(
+                    reward=self._state.cumulative_reward,
+                    resolved=self._state.incident_resolved,
+                    action_types=action_types,
+                    incident_type=scenario.incident_type,
+                )
+            except Exception:
+                pass
 
         # ── Cost tracking ─────────────────────────────────────────────────────
         step_tokens = judge_tokens
@@ -862,10 +1140,15 @@ class AIRENEnvironment(Environment):
                 for v in (compliance_decision.violations if compliance_decision else [])
                 if not v.blocked
             ],
-            # Counterfactual reward signal — how much better than random
+            # Counterfactual reward signal
             "counterfactual_bonus": rb.counterfactual_bonus,
             "counterfactual_delta": round(_counterfactual_delta, 3),
             "random_expected_delta": round(_random_expected_delta, 3),
+            # Self-evolving upgrades
+            "reward_hacking_detected": bool(hack_penalty_explanation),
+            "reward_hacking_explanation": hack_penalty_explanation,
+            "self_reward": self_reward_info,
+            "curriculum_stats": {},  # populated lazily
         }
 
         final_reward = judge_result.final_score if judge_result else rb.total
