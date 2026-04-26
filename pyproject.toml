@@ -1,6 +1,6 @@
 [build-system]
 requires = ["setuptools>=68", "wheel"]
-build-backend = "setuptools.backends.legacy:build"
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "airen-env"
@@ -22,5 +22,5 @@ dev = ["pytest>=7.0", "httpx>=0.24.0"]
 server = "airen_env.server.app:main"
 
 [tool.setuptools.packages.find]
-where = [".."]
+where = ["."]
 include = ["airen_env*"]
